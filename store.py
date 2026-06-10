@@ -1,9 +1,11 @@
+import os
 import sqlite3
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "cardsnap.db"
+_default = Path(__file__).parent / "cardsnap.db"
+DB_PATH = Path(os.environ.get("DB_PATH", str(_default)))
 
 
 def _connect() -> sqlite3.Connection:
