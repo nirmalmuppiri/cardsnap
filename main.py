@@ -53,9 +53,9 @@ async def scan(
         ext = mime.split("/")[-1].split(";")[0] or "jpg"
 
         image_path = str(UPLOAD_DIR / f"{uuid.uuid4()}.{ext}")
-        Path(image_path).write_bytes(raw)
+        await asyncio.to_thread(Path(image_path).write_bytes, raw)
 
-        r2_key = storage.upload(image_path, event_name, exhibitor_name)
+        r2_key = await asyncio.to_thread(storage.upload, image_path, event_name, exhibitor_name)
         store.save_upload(event_name, exhibitor_name, image_path, r2_key)
 
         return {"filename": img.filename, "status": "uploaded"}
