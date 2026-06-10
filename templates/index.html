@@ -19,7 +19,7 @@
     <span id="cameraCount" class="camera-count">0 photos</span>
     <button id="cameraDone" class="camera-done">Done</button>
   </div>
-  <video id="cameraVideo" autoplay playsinline></video>
+  <video id="cameraVideo" autoplay playsinline muted></video>
   <div id="cameraThumbStrip" class="camera-thumb-strip"></div>
   <button id="cameraShutter" class="camera-shutter" aria-label="Take photo"></button>
   <canvas id="cameraCanvas" class="hidden"></canvas>
@@ -244,17 +244,23 @@ cameraDone.addEventListener('click', () => {
 
 cameraShutter.addEventListener('click', () => {
   const video = cameraVideo;
+  if (!video.videoWidth || !video.videoHeight) {
+    showStatus('Camera not ready yet — try again', true);
+    return;
+  }
   cameraCanvas.width = video.videoWidth;
   cameraCanvas.height = video.videoHeight;
   cameraCanvas.getContext('2d').drawImage(video, 0, 0);
+  cameraShutter.classList.add('flash');
+  setTimeout(() => cameraShutter.classList.remove('flash'), 150);
   cameraCanvas.toBlob(blob => {
-    if (!blob) return;
+    if (!blob) {
+      showStatus('Capture failed — try again', true);
+      return;
+    }
     cameraPhotos.push(blob);
     addCameraThumb(blob);
     updateCameraCount();
-    // Flash feedback
-    cameraShutter.classList.add('flash');
-    setTimeout(() => cameraShutter.classList.remove('flash'), 150);
   }, 'image/jpeg', 0.9);
 });
 
