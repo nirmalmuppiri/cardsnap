@@ -124,9 +124,14 @@
 </main>
 
 <script>
-// ── Photo queue ──────────────────────────────────────────────────────────────
+const BATCH_SIZE      = 20;  // photos per HTTP request
+const MAX_QUEUE_THUMBS  = 20;  // DOM thumbnails shown in queue
+const MAX_STRIP_THUMBS  = 20;  // DOM thumbnails shown in camera strip
+
 // Each entry: { blob: Blob, url: string, name: string }
-let photoQueue = [];
+let photoQueue   = [];
+let cameraStream = null;
+let cameraPhotos = [];
 
 const scanForm       = document.getElementById('scanForm');
 const openCameraBtn  = document.getElementById('openCameraBtn');
@@ -134,8 +139,6 @@ const fileInput      = document.getElementById('fileInput');
 const photoQueueEl   = document.getElementById('photoQueue');
 const scanBtn        = document.getElementById('scanBtn');
 const statusMsg      = document.getElementById('statusMsg');
-
-// Camera elements
 const cameraOverlay  = document.getElementById('cameraOverlay');
 const cameraVideo    = document.getElementById('cameraVideo');
 const cameraCanvas   = document.getElementById('cameraCanvas');
@@ -145,28 +148,30 @@ const cameraDone     = document.getElementById('cameraDone');
 const cameraCount    = document.getElementById('cameraCount');
 const cameraThumbStrip = document.getElementById('cameraThumbStrip');
 
-let cameraStream = null;
-let cameraPhotos = []; // photos taken this camera session
-
-// ── Queue helpers ────────────────────────────────────────────────────────────
-function addToQueue(blob, name) {
-  const url = URL.createObjectURL(blob);
-  const idx = photoQueue.length;
-  photoQueue.push({ blob, url, name });
-  renderQueueThumb(idx);
-  updateScanBtn();
-}
-
-function renderQueueThumb(idx) {
-  const { url, name } = photoQueue[idx];
+// ── Queue ────────────────────────────────────────────────────────────────────
+function rebuildQueue() {
+  photoQueueEl.innerHTML = '';
+  if (photoQueue.length === 0) {
+    photoQueueEl.classList.add('hidden');
+    updateScanBtn();
+    return;
+  }
   photoQueueEl.classList.remove('hidden');
-  const wrap = document.createElement('div');
-  wrap.className = 'queue-thumb';
-  wrap.innerHTML = `
-    <img src="${url}" alt="${name}">
-    <button class="queue-remove" data-idx="${idx}" aria-label="Remove">✕</button>
-  `;
-  photoQueueEl.appendChild(wrap);
+  const visible = Math.min(photoQueue.length, MAX_QUEUE_THUMBS);
+  for (let i = 0; i < visible; i++) {
+    const { url, name } = photoQueue[i];
+    const wrap = document.createElement('div');
+    wrap.className = 'queue-thumb';
+    wrap.innerHTML = `<img src="${url}" alt="${name}"><button class="queue-remove" data-idx="${i}" aria-label="Remove">✕</button>`;
+    photoQueueEl.appendChild(wrap);
+  }
+  if (photoQueue.length > MAX_QUEUE_THUMBS) {
+    const extra = document.createElement('div');
+    extra.className = 'queue-thumb queue-overflow';
+    extra.textContent = `+${photoQueue.length - MAX_QUEUE_THUMBS}`;
+    photoQueueEl.appendChild(extra);
+  }
+  updateScanBtn();
 }
 
 photoQueueEl.addEventListener('click', e => {
@@ -178,24 +183,20 @@ photoQueueEl.addEventListener('click', e => {
   rebuildQueue();
 });
 
-function rebuildQueue() {
-  photoQueueEl.innerHTML = '';
-  if (photoQueue.length === 0) {
-    photoQueueEl.classList.add('hidden');
-  } else {
-    photoQueue.forEach((_, i) => renderQueueThumb(i));
-  }
-  updateScanBtn();
-}
-
 function updateScanBtn() {
-  scanBtn.disabled = photoQueue.length === 0;
+  const n = photoQueue.length;
+  scanBtn.disabled = n === 0;
+  scanBtn.textContent = n > 0 ? `Upload ${n} Photo${n !== 1 ? 's' : ''}` : 'Upload Photos';
 }
 
 // ── File picker ──────────────────────────────────────────────────────────────
 fileInput.addEventListener('change', () => {
-  Array.from(fileInput.files).forEach(f => addToQueue(f, f.name));
+  // Batch-push all files, then rebuild DOM once (not per-file)
+  Array.from(fileInput.files).forEach(f => {
+    photoQueue.push({ blob: f, url: URL.createObjectURL(f), name: f.name });
+  });
   fileInput.value = '';
+  rebuildQueue();
 });
 
 // ── Camera ───────────────────────────────────────────────────────────────────
@@ -206,7 +207,6 @@ openCameraBtn.addEventListener('click', async () => {
       audio: false,
     });
   } catch {
-    // Fallback to any camera if rear not available
     try {
       cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     } catch (err) {
@@ -238,9 +238,13 @@ cameraClose.addEventListener('click', () => {
 });
 
 cameraDone.addEventListener('click', () => {
-  cameraPhotos.forEach((blob, i) => addToQueue(blob, `camera_${Date.now()}_${i}.jpg`));
+  const ts = Date.now();
+  cameraPhotos.forEach((blob, i) => {
+    photoQueue.push({ blob, url: URL.createObjectURL(blob), name: `camera_${ts}_${i}.jpg` });
+  });
   cameraPhotos = [];
   stopCamera();
+  rebuildQueue();
 });
 
 cameraShutter.addEventListener('click', () => {
@@ -255,24 +259,20 @@ cameraShutter.addEventListener('click', () => {
   cameraShutter.classList.add('flash');
   setTimeout(() => cameraShutter.classList.remove('flash'), 150);
   cameraCanvas.toBlob(blob => {
-    if (!blob) {
-      showStatus('Capture failed — try again', true);
-      return;
-    }
+    if (!blob) { showStatus('Capture failed — try again', true); return; }
     cameraPhotos.push(blob);
-    addCameraThumb(blob);
+    // Only add DOM thumb up to the cap; always update the count
+    if (cameraThumbStrip.children.length < MAX_STRIP_THUMBS) {
+      const url = URL.createObjectURL(blob);
+      const img = document.createElement('img');
+      img.src = url;
+      img.className = 'camera-thumb';
+      cameraThumbStrip.appendChild(img);
+      cameraThumbStrip.scrollLeft = cameraThumbStrip.scrollWidth;
+    }
     updateCameraCount();
   }, 'image/jpeg', 0.9);
 });
-
-function addCameraThumb(blob) {
-  const url = URL.createObjectURL(blob);
-  const img = document.createElement('img');
-  img.src = url;
-  img.className = 'camera-thumb';
-  cameraThumbStrip.appendChild(img);
-  cameraThumbStrip.scrollLeft = cameraThumbStrip.scrollWidth;
-}
 
 function updateCameraCount() {
   const n = cameraPhotos.length;
@@ -280,34 +280,59 @@ function updateCameraCount() {
   cameraDone.disabled = n === 0;
 }
 
-// ── Upload submission ─────────────────────────────────────────────────────────
+// ── Upload (batched) ──────────────────────────────────────────────────────────
 scanForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (photoQueue.length === 0) return;
 
-  const formData = new FormData();
-  formData.append('event_name', document.getElementById('event_name').value);
-  formData.append('exhibitor_name', document.getElementById('exhibitor_name').value);
-  photoQueue.forEach(({ blob, name }) => formData.append('images', blob, name));
+  const eventName    = document.getElementById('event_name').value;
+  const exhibitorName = document.getElementById('exhibitor_name').value;
+  const snapshot     = [...photoQueue];
+  const total        = snapshot.length;
 
-  scanBtn.disabled = true;
-  scanBtn.textContent = `Uploading ${photoQueue.length} photo${photoQueue.length !== 1 ? 's' : ''}…`;
+  scanBtn.disabled      = true;
+  openCameraBtn.disabled = true;
+
+  let uploaded = 0;
+  let failed   = 0;
 
   try {
-    const res = await fetch('/scan', { method: 'POST', body: formData });
-    if (!res.ok) throw new Error(`Server error ${res.status}`);
-    showStatus('Photos successfully uploaded to the bucket');
-    photoQueue.forEach(p => URL.revokeObjectURL(p.url));
+    for (let i = 0; i < snapshot.length; i += BATCH_SIZE) {
+      const batch   = snapshot.slice(i, i + BATCH_SIZE);
+      const batchEnd = Math.min(i + batch.length, total);
+      scanBtn.textContent = `Uploading ${i + 1}–${batchEnd} of ${total}…`;
+
+      const fd = new FormData();
+      fd.append('event_name',    eventName);
+      fd.append('exhibitor_name', exhibitorName);
+      batch.forEach(({ blob, name }) => fd.append('images', blob, name));
+
+      try {
+        const res = await fetch('/scan', { method: 'POST', body: fd });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        uploaded += batch.length;
+      } catch (batchErr) {
+        failed += batch.length;
+        console.error(`Batch ${Math.floor(i / BATCH_SIZE) + 1} failed:`, batchErr);
+      }
+    }
+
+    if (failed === 0) {
+      showStatus(`${total} photo${total !== 1 ? 's' : ''} successfully uploaded`);
+    } else {
+      showStatus(`${uploaded} uploaded, ${failed} failed — check connection`, true);
+    }
+
+    snapshot.forEach(p => URL.revokeObjectURL(p.url));
     photoQueue = [];
     rebuildQueue();
-  } catch (err) {
-    showStatus('Upload failed: ' + err.message, true);
   } finally {
-    scanBtn.disabled = photoQueue.length === 0;
-    scanBtn.textContent = 'Upload Photos';
+    openCameraBtn.disabled = false;
+    updateScanBtn();
   }
 });
 
+// ── Contacts ─────────────────────────────────────────────────────────────────
 async function deleteContact(id) {
   if (!confirm('Delete this contact?')) return;
   await fetch(`/contacts/${id}`, { method: 'DELETE' });
@@ -318,7 +343,7 @@ function showStatus(msg, isError = false) {
   statusMsg.textContent = msg;
   statusMsg.className = 'status-msg ' + (isError ? 'error' : 'success');
   statusMsg.classList.remove('hidden');
-  setTimeout(() => statusMsg.classList.add('hidden'), 4000);
+  setTimeout(() => statusMsg.classList.add('hidden'), 5000);
 }
 </script>
 

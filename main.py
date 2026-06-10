@@ -22,6 +22,9 @@ store.init_db()
 UPLOAD_DIR = store.DB_PATH.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
+# Cap concurrent R2 connections so large batches don't exhaust the thread pool
+R2_SEMAPHORE = asyncio.Semaphore(8)
+
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 templates = Jinja2Templates(directory="templates")
@@ -55,7 +58,8 @@ async def scan(
         image_path = str(UPLOAD_DIR / f"{uuid.uuid4()}.{ext}")
         await asyncio.to_thread(Path(image_path).write_bytes, raw)
 
-        r2_key = await asyncio.to_thread(storage.upload, image_path, event_name, exhibitor_name)
+        async with R2_SEMAPHORE:
+            r2_key = await asyncio.to_thread(storage.upload, image_path, event_name, exhibitor_name)
         store.save_upload(event_name, exhibitor_name, image_path, r2_key)
 
         return {"filename": img.filename, "status": "uploaded"}
