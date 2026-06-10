@@ -14,7 +14,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import store
-import extract as extractor
 import excel as excel_gen
 import storage
 
@@ -56,47 +55,13 @@ async def scan(
         image_path = str(UPLOAD_DIR / f"{uuid.uuid4()}.{ext}")
         Path(image_path).write_bytes(raw)
 
-        # Upload to R2 if configured (non-blocking best-effort)
         r2_key = storage.upload(image_path, event_name, exhibitor_name)
+        store.save_upload(event_name, exhibitor_name, image_path, r2_key)
 
-        upload_id = store.save_upload(event_name, exhibitor_name, image_path, r2_key)
-
-        try:
-            data = extractor.extract_card(raw, mime_type=mime)
-            status = "ok"
-        except Exception as e:
-            data = {"error": str(e)}
-            status = "error"
-
-        if status == "ok":
-            contact_id = store.save_contact(event_name, data)
-            store.link_upload_to_contact(upload_id, contact_id)
-
-        return {"filename": img.filename, "upload_id": upload_id, "data": data, "status": status}
+        return {"filename": img.filename, "status": "uploaded"}
 
     results = await asyncio.gather(*[process_one(img) for img in images])
-    return JSONResponse({"event_name": event_name, "cards": results})
-
-
-@app.post("/uploads/{upload_id}/retry")
-async def retry_upload(upload_id: int):
-    upload = store.get_upload(upload_id)
-    if not upload:
-        return JSONResponse({"error": "Upload not found"}, status_code=404)
-
-    image_path = Path(upload["image_path"])
-    if not image_path.exists():
-        return JSONResponse({"error": "Image file missing"}, status_code=404)
-
-    raw = image_path.read_bytes()
-    suffix = image_path.suffix.lstrip(".")
-    mime = f"image/{suffix}" if suffix else "image/jpeg"
-
-    try:
-        data = extractor.extract_card(raw, mime_type=mime)
-        return JSONResponse({"data": data, "status": "ok"})
-    except Exception as e:
-        return JSONResponse({"data": {"error": str(e)}, "status": "error"})
+    return JSONResponse({"event_name": event_name, "uploaded": len(results)})
 
 
 @app.get("/uploads/{upload_id}/image")
@@ -112,27 +77,6 @@ async def serve_upload(upload_id: int):
     suffix = image_path.suffix.lstrip(".")
     mime = f"image/{suffix}" if suffix else "image/jpeg"
     return Response(content=image_path.read_bytes(), media_type=mime)
-
-
-@app.post("/contacts")
-async def save_contacts(request: Request):
-    body = await request.json()
-    event_name = body["event_name"]
-    cards = body["cards"]
-    ids = []
-    for card in cards:
-        cid = store.save_contact(event_name, card["data"])
-        if card.get("upload_id"):
-            store.link_upload_to_contact(card["upload_id"], cid)
-        ids.append(cid)
-    return JSONResponse({"saved": len(ids)})
-
-
-@app.put("/contacts/{contact_id}")
-async def update_contact(contact_id: int, request: Request):
-    body = await request.json()
-    store.update_contact(contact_id, body["data"])
-    return JSONResponse({"ok": True})
 
 
 @app.delete("/contacts/{contact_id}")

@@ -38,16 +38,6 @@ def init_db():
         conn.commit()
 
 
-def save_contact(event_name: str, data: dict) -> int:
-    with _connect() as conn:
-        cur = conn.execute(
-            "INSERT INTO contacts (event_name, data, created_at) VALUES (?, ?, ?)",
-            (event_name, json.dumps(data, ensure_ascii=False), datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-        return cur.lastrowid
-
-
 def get_contacts(event_name: str | None = None) -> list[dict]:
     with _connect() as conn:
         if event_name:
@@ -63,15 +53,6 @@ def get_contacts(event_name: str | None = None) -> list[dict]:
         r["data"] = json.loads(r["data"])
         result.append(r)
     return result
-
-
-def update_contact(contact_id: int, data: dict):
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE contacts SET data = ? WHERE id = ?",
-            (json.dumps(data, ensure_ascii=False), contact_id),
-        )
-        conn.commit()
 
 
 def delete_contact(contact_id: int):
@@ -115,10 +96,3 @@ def get_upload(upload_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-def link_upload_to_contact(upload_id: int, contact_id: int):
-    with _connect() as conn:
-        conn.execute(
-            "UPDATE uploads SET contact_id = ? WHERE id = ?",
-            (contact_id, upload_id),
-        )
-        conn.commit()
