@@ -24,6 +24,17 @@ def init_db():
                 created_at TEXT    NOT NULL
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS uploads (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_name      TEXT NOT NULL,
+                exhibitor_name  TEXT NOT NULL DEFAULT '',
+                image_path      TEXT NOT NULL,
+                r2_key          TEXT,
+                created_at      TEXT NOT NULL,
+                contact_id      INTEGER
+            )
+        """)
         conn.commit()
 
 
@@ -75,3 +86,28 @@ def list_events() -> list[str]:
             "SELECT DISTINCT event_name FROM contacts ORDER BY event_name"
         ).fetchall()
     return [row["event_name"] for row in rows]
+
+
+def save_upload(event_name: str, exhibitor_name: str, image_path: str, r2_key: str | None = None) -> int:
+    with _connect() as conn:
+        cur = conn.execute(
+            "INSERT INTO uploads (event_name, exhibitor_name, image_path, r2_key, created_at) VALUES (?, ?, ?, ?, ?)",
+            (event_name, exhibitor_name, image_path, r2_key, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        return cur.lastrowid
+
+
+def get_upload(upload_id: int) -> dict | None:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM uploads WHERE id = ?", (upload_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def link_upload_to_contact(upload_id: int, contact_id: int):
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE uploads SET contact_id = ? WHERE id = ?",
+            (contact_id, upload_id),
+        )
+        conn.commit()

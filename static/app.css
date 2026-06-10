@@ -30,11 +30,7 @@ header {
   z-index: 10;
 }
 
-header h1 {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-}
+header h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.3px; }
 
 main {
   max-width: 600px;
@@ -52,12 +48,7 @@ main {
   border: 1px solid var(--border);
 }
 
-.card h2 {
-  font-size: 1rem;
-  font-weight: 600;
-  margin-bottom: 1rem;
-  color: var(--primary);
-}
+.card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; color: var(--primary); }
 
 /* Forms */
 label {
@@ -73,8 +64,7 @@ label {
 
 label:first-of-type { margin-top: 0; }
 
-input[type="text"],
-input[type="file"] {
+input[type="text"] {
   display: block;
   width: 100%;
   padding: 0.75rem 1rem;
@@ -86,14 +76,69 @@ input[type="file"] {
   -webkit-appearance: none;
 }
 
-input[type="text"]:focus {
-  outline: none;
-  border-color: var(--primary);
+input[type="text"]:focus { outline: none; border-color: var(--primary); }
+
+/* Photo input row */
+.photo-input-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
 }
 
-input[type="file"] {
-  padding: 0.6rem 0.75rem;
+.btn-camera, .btn-file-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.75rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  border-radius: 8px;
   cursor: pointer;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.btn-camera:active, .btn-file-label:active { background: #e8e8e8; }
+
+/* Photo queue */
+.photo-queue {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.queue-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+}
+
+.queue-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.queue-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  background: rgba(0,0,0,0.55);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  font-size: 0.65rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 /* Buttons */
@@ -138,6 +183,17 @@ input[type="file"] {
 
 .btn-delete:active { color: var(--danger); }
 
+.btn-retry {
+  font-size: 0.8rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border: 1.5px solid var(--primary);
+  color: var(--primary);
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
 /* Review cards */
 .review-card {
   border: 1.5px solid var(--border);
@@ -146,27 +202,33 @@ input[type="file"] {
   margin-bottom: 1rem;
 }
 
+.review-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+
 .review-card-title {
   font-size: 0.8rem;
   font-weight: 700;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  margin-bottom: 0.75rem;
+}
+
+.extraction-error {
+  font-size: 0.875rem;
+  color: var(--danger);
+  padding: 0.5rem;
+  background: #fef2f2;
+  border-radius: 6px;
 }
 
 .field-row { margin-bottom: 0.5rem; }
+.field-row label { margin-top: 0; margin-bottom: 0.2rem; }
 
-.field-row label {
-  margin-top: 0;
-  margin-bottom: 0.2rem;
-}
-
-.hint {
-  font-size: 0.875rem;
-  color: var(--muted);
-  margin-bottom: 1rem;
-}
+.hint { font-size: 0.875rem; color: var(--muted); margin-bottom: 1rem; }
 
 /* Contacts list */
 .contacts-header {
@@ -187,7 +249,6 @@ input[type="file"] {
 }
 
 .contact-row:last-child { border-bottom: none; }
-
 .contact-summary { font-size: 0.9rem; line-height: 1.4; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 
@@ -204,11 +265,7 @@ input[type="file"] {
   background: var(--bg);
 }
 
-.event-tag.active {
-  background: var(--primary);
-  color: white;
-  border-color: var(--primary);
-}
+.event-tag.active { background: var(--primary); color: white; border-color: var(--primary); }
 
 /* Status */
 .status-msg {
@@ -226,5 +283,95 @@ input[type="file"] {
 
 .status-msg.success { background: #16a34a; color: white; }
 .status-msg.error   { background: var(--danger); color: white; }
+
+/* ── Camera overlay ─────────────────────────────────────────────────────── */
+.camera-overlay {
+  position: fixed;
+  inset: 0;
+  background: black;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+}
+
+.camera-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: rgba(0,0,0,0.6);
+  z-index: 1;
+}
+
+.camera-close {
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.4rem;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+}
+
+.camera-count { color: white; font-size: 0.95rem; font-weight: 600; }
+
+.camera-done {
+  background: white;
+  color: var(--primary);
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 700;
+  padding: 0.4rem 1rem;
+  cursor: pointer;
+}
+
+.camera-done:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#cameraVideo {
+  flex: 1;
+  width: 100%;
+  object-fit: cover;
+}
+
+.camera-thumb-strip {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.5);
+  min-height: 68px;
+  align-items: center;
+  scrollbar-width: none;
+}
+
+.camera-thumb-strip::-webkit-scrollbar { display: none; }
+
+.camera-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+  border: 2px solid rgba(255,255,255,0.3);
+}
+
+.camera-shutter {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: white;
+  border: 4px solid rgba(255,255,255,0.5);
+  cursor: pointer;
+  margin: 1rem auto;
+  display: block;
+  box-shadow: 0 0 0 4px rgba(255,255,255,0.2);
+  transition: transform 0.1s, background 0.1s;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.camera-shutter:active, .camera-shutter.flash {
+  background: #ccc;
+  transform: scale(0.92);
+}
 
 .hidden { display: none !important; }

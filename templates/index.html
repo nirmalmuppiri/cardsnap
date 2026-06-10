@@ -12,6 +12,19 @@
   <h1>CardSnap</h1>
 </header>
 
+<!-- Camera overlay -->
+<div id="cameraOverlay" class="camera-overlay hidden">
+  <div class="camera-header">
+    <button id="cameraClose" class="camera-close">✕</button>
+    <span id="cameraCount" class="camera-count">0 photos</span>
+    <button id="cameraDone" class="camera-done">Done</button>
+  </div>
+  <video id="cameraVideo" autoplay playsinline></video>
+  <div id="cameraThumbStrip" class="camera-thumb-strip"></div>
+  <button id="cameraShutter" class="camera-shutter" aria-label="Take photo"></button>
+  <canvas id="cameraCanvas" class="hidden"></canvas>
+</div>
+
 <main>
 
   <!-- Scan Section -->
@@ -28,21 +41,32 @@
         required
       >
 
-      <label for="images">Photos (select all at once)</label>
+      <label for="exhibitor_name">Exhibitor</label>
       <input
-        type="file"
-        id="images"
-        name="images"
-        accept="image/*"
-        multiple
+        type="text"
+        id="exhibitor_name"
+        name="exhibitor_name"
+        placeholder="e.g. Tesla Booth"
         required
       >
 
-      <button type="submit" id="scanBtn" class="btn-primary">Extract Cards</button>
+      <label>Photos</label>
+      <div class="photo-input-row">
+        <button type="button" id="openCameraBtn" class="btn-camera">📷 Camera</button>
+        <label class="btn-file-label">
+          🖼 Gallery
+          <input type="file" id="fileInput" accept="image/*" multiple class="hidden">
+        </label>
+      </div>
+
+      <!-- Photo queue thumbnails -->
+      <div id="photoQueue" class="photo-queue hidden"></div>
+
+      <button type="submit" id="scanBtn" class="btn-primary" disabled>Extract Cards</button>
     </form>
   </section>
 
-  <!-- Review Section (hidden until extraction completes) -->
+  <!-- Review Section -->
   <section id="reviewSection" class="card hidden">
     <h2>Review & Confirm</h2>
     <p class="hint">Edit any fields, then tap <strong>Save All</strong>.</p>
@@ -79,7 +103,6 @@
   </section>
   {% endif %}
 
-  <!-- Filter by event -->
   {% if events %}
   <section class="card">
     <h2>Events</h2>
@@ -95,75 +118,257 @@
 </main>
 
 <script>
-const scanForm = document.getElementById('scanForm');
-const reviewSection = document.getElementById('reviewSection');
-const cardList = document.getElementById('cardList');
-const saveAllBtn = document.getElementById('saveAllBtn');
-const statusMsg = document.getElementById('statusMsg');
-const scanBtn = document.getElementById('scanBtn');
+// ── Photo queue ──────────────────────────────────────────────────────────────
+// Each entry: { blob: Blob, url: string, name: string }
+let photoQueue = [];
+
+const scanForm       = document.getElementById('scanForm');
+const openCameraBtn  = document.getElementById('openCameraBtn');
+const fileInput      = document.getElementById('fileInput');
+const photoQueueEl   = document.getElementById('photoQueue');
+const scanBtn        = document.getElementById('scanBtn');
+const reviewSection  = document.getElementById('reviewSection');
+const cardList       = document.getElementById('cardList');
+const saveAllBtn     = document.getElementById('saveAllBtn');
+const statusMsg      = document.getElementById('statusMsg');
+
+// Camera elements
+const cameraOverlay  = document.getElementById('cameraOverlay');
+const cameraVideo    = document.getElementById('cameraVideo');
+const cameraCanvas   = document.getElementById('cameraCanvas');
+const cameraShutter  = document.getElementById('cameraShutter');
+const cameraClose    = document.getElementById('cameraClose');
+const cameraDone     = document.getElementById('cameraDone');
+const cameraCount    = document.getElementById('cameraCount');
+const cameraThumbStrip = document.getElementById('cameraThumbStrip');
 
 let extractedCards = [];
 let currentEvent = '';
+let cameraStream = null;
+let cameraPhotos = []; // photos taken this camera session
 
-function showStatus(msg, isError = false) {
-  statusMsg.textContent = msg;
-  statusMsg.className = 'status-msg ' + (isError ? 'error' : 'success');
-  statusMsg.classList.remove('hidden');
-  setTimeout(() => statusMsg.classList.add('hidden'), 4000);
+// ── Queue helpers ────────────────────────────────────────────────────────────
+function addToQueue(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const idx = photoQueue.length;
+  photoQueue.push({ blob, url, name });
+  renderQueueThumb(idx);
+  updateScanBtn();
 }
 
+function renderQueueThumb(idx) {
+  const { url, name } = photoQueue[idx];
+  photoQueueEl.classList.remove('hidden');
+  const wrap = document.createElement('div');
+  wrap.className = 'queue-thumb';
+  wrap.innerHTML = `
+    <img src="${url}" alt="${name}">
+    <button class="queue-remove" data-idx="${idx}" aria-label="Remove">✕</button>
+  `;
+  photoQueueEl.appendChild(wrap);
+}
+
+photoQueueEl.addEventListener('click', e => {
+  const btn = e.target.closest('.queue-remove');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.idx);
+  URL.revokeObjectURL(photoQueue[idx].url);
+  photoQueue.splice(idx, 1);
+  rebuildQueue();
+});
+
+function rebuildQueue() {
+  photoQueueEl.innerHTML = '';
+  if (photoQueue.length === 0) {
+    photoQueueEl.classList.add('hidden');
+  } else {
+    photoQueue.forEach((_, i) => renderQueueThumb(i));
+  }
+  updateScanBtn();
+}
+
+function updateScanBtn() {
+  scanBtn.disabled = photoQueue.length === 0;
+}
+
+// ── File picker ──────────────────────────────────────────────────────────────
+fileInput.addEventListener('change', () => {
+  Array.from(fileInput.files).forEach(f => addToQueue(f, f.name));
+  fileInput.value = '';
+});
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+openCameraBtn.addEventListener('click', async () => {
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    });
+  } catch {
+    // Fallback to any camera if rear not available
+    try {
+      cameraStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    } catch (err) {
+      showStatus('Camera not available: ' + err.message, true);
+      return;
+    }
+  }
+  cameraVideo.srcObject = cameraStream;
+  cameraPhotos = [];
+  cameraThumbStrip.innerHTML = '';
+  updateCameraCount();
+  cameraOverlay.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+});
+
+function stopCamera() {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+  }
+  cameraVideo.srcObject = null;
+  cameraOverlay.classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+cameraClose.addEventListener('click', () => {
+  cameraPhotos = [];
+  stopCamera();
+});
+
+cameraDone.addEventListener('click', () => {
+  cameraPhotos.forEach((blob, i) => addToQueue(blob, `camera_${Date.now()}_${i}.jpg`));
+  cameraPhotos = [];
+  stopCamera();
+});
+
+cameraShutter.addEventListener('click', () => {
+  const video = cameraVideo;
+  cameraCanvas.width = video.videoWidth;
+  cameraCanvas.height = video.videoHeight;
+  cameraCanvas.getContext('2d').drawImage(video, 0, 0);
+  cameraCanvas.toBlob(blob => {
+    if (!blob) return;
+    cameraPhotos.push(blob);
+    addCameraThumb(blob);
+    updateCameraCount();
+    // Flash feedback
+    cameraShutter.classList.add('flash');
+    setTimeout(() => cameraShutter.classList.remove('flash'), 150);
+  }, 'image/jpeg', 0.9);
+});
+
+function addCameraThumb(blob) {
+  const url = URL.createObjectURL(blob);
+  const img = document.createElement('img');
+  img.src = url;
+  img.className = 'camera-thumb';
+  cameraThumbStrip.appendChild(img);
+  cameraThumbStrip.scrollLeft = cameraThumbStrip.scrollWidth;
+}
+
+function updateCameraCount() {
+  const n = cameraPhotos.length;
+  cameraCount.textContent = n === 0 ? '0 photos' : `${n} photo${n !== 1 ? 's' : ''}`;
+  cameraDone.disabled = n === 0;
+}
+
+// ── Scan submission ──────────────────────────────────────────────────────────
 scanForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  const formData = new FormData(scanForm);
-  currentEvent = formData.get('event_name');
+  if (photoQueue.length === 0) return;
+
+  currentEvent = document.getElementById('event_name').value;
+  const formData = new FormData();
+  formData.append('event_name', currentEvent);
+  formData.append('exhibitor_name', document.getElementById('exhibitor_name').value);
+  photoQueue.forEach(({ blob, name }) => formData.append('images', blob, name));
 
   scanBtn.disabled = true;
-  scanBtn.textContent = 'Extracting…';
+  scanBtn.textContent = `Extracting ${photoQueue.length} card${photoQueue.length !== 1 ? 's' : ''}…`;
 
   try {
     const res = await fetch('/scan', { method: 'POST', body: formData });
     const json = await res.json();
-
     extractedCards = json.cards;
     renderReview(json.cards);
     reviewSection.classList.remove('hidden');
     reviewSection.scrollIntoView({ behavior: 'smooth' });
+    // Clear queue
+    photoQueue.forEach(p => URL.revokeObjectURL(p.url));
+    photoQueue = [];
+    rebuildQueue();
   } catch (err) {
     showStatus('Extraction failed: ' + err.message, true);
   } finally {
-    scanBtn.disabled = false;
+    scanBtn.disabled = photoQueue.length === 0;
     scanBtn.textContent = 'Extract Cards';
   }
 });
 
+// ── Review ───────────────────────────────────────────────────────────────────
 function renderReview(cards) {
   cardList.innerHTML = '';
   cards.forEach((card, idx) => {
     const div = document.createElement('div');
     div.className = 'review-card';
-    div.innerHTML = `<div class="review-card-title">Card ${idx + 1}${card.filename ? ` — ${card.filename}` : ''}</div>`;
+    div.dataset.idx = idx;
 
-    const fields = card.data;
-    Object.entries(fields).forEach(([key, value]) => {
-      const row = document.createElement('div');
-      row.className = 'field-row';
-      row.innerHTML = `
-        <label>${key.replace(/_/g, ' ')}</label>
-        <input type="text" data-idx="${idx}" data-key="${key}" value="${escapeHtml(String(value || ''))}">
-      `;
-      div.appendChild(row);
-    });
+    const isError = card.status === 'error';
+    div.innerHTML = `
+      <div class="review-card-header">
+        <span class="review-card-title">Card ${idx + 1}${card.filename ? ` — ${card.filename}` : ''}</span>
+        ${card.upload_id ? `<button class="btn-retry" data-upload-id="${card.upload_id}" data-idx="${idx}">↺ Retry</button>` : ''}
+      </div>
+      ${isError ? `<p class="extraction-error">${escapeHtml(card.data.error || 'Extraction failed')}</p>` : ''}
+    `;
+
+    if (!isError) {
+      Object.entries(card.data).forEach(([key, value]) => {
+        const row = document.createElement('div');
+        row.className = 'field-row';
+        row.innerHTML = `
+          <label>${key.replace(/_/g, ' ')}</label>
+          <input type="text" data-idx="${idx}" data-key="${key}" value="${escapeHtml(String(value || ''))}">
+        `;
+        div.appendChild(row);
+      });
+    }
 
     cardList.appendChild(div);
   });
 }
+
+cardList.addEventListener('click', async e => {
+  const btn = e.target.closest('.btn-retry');
+  if (!btn) return;
+  const uploadId = btn.dataset.uploadId;
+  const idx = parseInt(btn.dataset.idx);
+
+  btn.disabled = true;
+  btn.textContent = '…';
+
+  try {
+    const res = await fetch(`/uploads/${uploadId}/retry`, { method: 'POST' });
+    const json = await res.json();
+    extractedCards[idx].data = json.data;
+    extractedCards[idx].status = json.status;
+    // Re-render just this card
+    const cardDiv = cardList.querySelector(`[data-idx="${idx}"]`);
+    const newCards = [...extractedCards];
+    renderReview(newCards);
+  } catch (err) {
+    showStatus('Retry failed: ' + err.message, true);
+    btn.disabled = false;
+    btn.textContent = '↺ Retry';
+  }
+});
 
 function escapeHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 saveAllBtn.addEventListener('click', async () => {
-  // Collect edited values back into extractedCards
   document.querySelectorAll('#cardList input[data-idx]').forEach(input => {
     const idx = parseInt(input.dataset.idx);
     const key = input.dataset.key;
@@ -196,6 +401,13 @@ async function deleteContact(id) {
   if (!confirm('Delete this contact?')) return;
   await fetch(`/contacts/${id}`, { method: 'DELETE' });
   document.getElementById(`contact-${id}`)?.remove();
+}
+
+function showStatus(msg, isError = false) {
+  statusMsg.textContent = msg;
+  statusMsg.className = 'status-msg ' + (isError ? 'error' : 'success');
+  statusMsg.classList.remove('hidden');
+  setTimeout(() => statusMsg.classList.add('hidden'), 4000);
 }
 </script>
 

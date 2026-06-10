@@ -36,42 +36,24 @@ class ModelConfig:
 # Gemma 26B/31B: 1500 RPD each — best for sustained agent runs.
 # Flash models: 20-500 RPD — good quality but burn out fast.
 REGISTRY: dict[str, ModelConfig] = {
-    "flash-lite-3.1": ModelConfig(
-        api_id="gemini-3.1-flash-lite",
-        rpm=15, rpd=500, tpm=250_000, rank=1,
+    "flash-2.0": ModelConfig(
+        api_id="gemini-2.0-flash",
+        rpm=15, rpd=1_500, tpm=1_000_000, rank=1,
     ),
-    "gemma-26b": ModelConfig(
-        api_id="gemma-4-26b-a4b-it",
-        rpm=15, rpd=1_500, tpm=0, rank=2,
-    ),
-    "gemma-31b": ModelConfig(
-        api_id="gemma-4-31b-it",
-        rpm=15, rpd=1_500, tpm=0, rank=3,
-    ),
-    "flash-lite-2.5": ModelConfig(
-        api_id="gemini-2.5-flash-lite",
-        rpm=10, rpd=20, tpm=250_000, rank=4,
-    ),
-    "flash-3.5": ModelConfig(
-        api_id="gemini-3.5-flash",
-        rpm=5, rpd=20, tpm=250_000, rank=5,
-    ),
-    "flash-3": ModelConfig(
-        api_id="gemini-3-flash-preview",
-        rpm=5, rpd=20, tpm=250_000, rank=6,
+    "flash-1.5": ModelConfig(
+        api_id="gemini-1.5-flash",
+        rpm=15, rpd=1_500, tpm=1_000_000, rank=2,
     ),
     "flash-2.5": ModelConfig(
         api_id="gemini-2.5-flash",
-        rpm=5, rpd=20, tpm=250_000, rank=7,
+        rpm=10, rpd=500, tpm=250_000, rank=3,
     ),
 }
 
-# Ordered preference lists per task.
-# Gemma models do NOT support tool use — exclude from agent task.
 TASK_PREFERENCES: dict[str, list[str]] = {
-    "agent":  ["flash-lite-3.1", "flash-lite-2.5", "flash-3.5", "flash-2.5"],
-    "scorer": ["flash-lite-3.1", "flash-lite-2.5", "flash-3.5", "flash-3", "flash-2.5"],
-    "default": ["flash-lite-3.1", "gemma-26b", "gemma-31b"],
+    "agent":   ["flash-2.0", "flash-1.5", "flash-2.5"],
+    "scorer":  ["flash-2.0", "flash-1.5", "flash-2.5"],
+    "default": ["flash-2.0", "flash-1.5", "flash-2.5"],
 }
 
 

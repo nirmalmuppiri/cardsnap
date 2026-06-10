@@ -1,11 +1,12 @@
 import asyncio
 import mimetypes
 import os
+import uuid
 import urllib.parse
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
@@ -15,8 +16,12 @@ load_dotenv()
 import store
 import extract as extractor
 import excel as excel_gen
+import storage
 
 store.init_db()
+
+UPLOAD_DIR = store.DB_PATH.parent / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -37,36 +42,82 @@ async def index(request: Request, event: str = ""):
 
 @app.post("/scan")
 async def scan(
-    request: Request,
     event_name: str = Form(...),
+    exhibitor_name: str = Form(...),
     images: list[UploadFile] = File(...),
 ):
-    """
-    Receive multiple images, extract all cards in parallel,
-    return a JSON list of {filename, data} for the review form.
-    """
     async def process_one(img: UploadFile) -> dict:
         raw = await img.read()
         mime = img.content_type or mimetypes.guess_type(img.filename or "")[0] or "image/jpeg"
+        ext = mime.split("/")[-1].split(";")[0] or "jpg"
+
+        image_path = str(UPLOAD_DIR / f"{uuid.uuid4()}.{ext}")
+        Path(image_path).write_bytes(raw)
+
+        # Upload to R2 if configured (non-blocking best-effort)
+        r2_key = storage.upload(image_path, event_name, exhibitor_name)
+
+        upload_id = store.save_upload(event_name, exhibitor_name, image_path, r2_key)
+
         try:
             data = extractor.extract_card(raw, mime_type=mime)
+            status = "ok"
         except Exception as e:
             data = {"error": str(e)}
-        return {"filename": img.filename, "data": data}
+            status = "error"
+
+        return {"filename": img.filename, "upload_id": upload_id, "data": data, "status": status}
 
     results = await asyncio.gather(*[process_one(img) for img in images])
     return JSONResponse({"event_name": event_name, "cards": results})
 
 
+@app.post("/uploads/{upload_id}/retry")
+async def retry_upload(upload_id: int):
+    upload = store.get_upload(upload_id)
+    if not upload:
+        return JSONResponse({"error": "Upload not found"}, status_code=404)
+
+    image_path = Path(upload["image_path"])
+    if not image_path.exists():
+        return JSONResponse({"error": "Image file missing"}, status_code=404)
+
+    raw = image_path.read_bytes()
+    suffix = image_path.suffix.lstrip(".")
+    mime = f"image/{suffix}" if suffix else "image/jpeg"
+
+    try:
+        data = extractor.extract_card(raw, mime_type=mime)
+        return JSONResponse({"data": data, "status": "ok"})
+    except Exception as e:
+        return JSONResponse({"data": {"error": str(e)}, "status": "error"})
+
+
+@app.get("/uploads/{upload_id}/image")
+async def serve_upload(upload_id: int):
+    upload = store.get_upload(upload_id)
+    if not upload:
+        return Response(status_code=404)
+
+    image_path = Path(upload["image_path"])
+    if not image_path.exists():
+        return Response(status_code=404)
+
+    suffix = image_path.suffix.lstrip(".")
+    mime = f"image/{suffix}" if suffix else "image/jpeg"
+    return Response(content=image_path.read_bytes(), media_type=mime)
+
+
 @app.post("/contacts")
 async def save_contacts(request: Request):
-    """Save a batch of confirmed contacts."""
     body = await request.json()
     event_name = body["event_name"]
-    cards = body["cards"]  # list of {data: {...}}
+    cards = body["cards"]
     ids = []
     for card in cards:
         cid = store.save_contact(event_name, card["data"])
+        if card.get("upload_id"):
+            store.link_upload_to_contact(card["upload_id"], cid)
         ids.append(cid)
     return JSONResponse({"saved": len(ids)})
 
