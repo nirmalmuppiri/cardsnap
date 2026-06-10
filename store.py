@@ -82,10 +82,21 @@ def delete_contact(contact_id: int):
 
 def list_events() -> list[str]:
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT event_name FROM contacts ORDER BY event_name"
-        ).fetchall()
+        rows = conn.execute("""
+            SELECT DISTINCT event_name FROM contacts
+            UNION
+            SELECT DISTINCT event_name FROM uploads
+            ORDER BY event_name
+        """).fetchall()
     return [row["event_name"] for row in rows]
+
+
+def list_exhibitors() -> list[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT exhibitor_name FROM uploads WHERE exhibitor_name != '' ORDER BY exhibitor_name"
+        ).fetchall()
+    return [row["exhibitor_name"] for row in rows]
 
 
 def save_upload(event_name: str, exhibitor_name: str, image_path: str, r2_key: str | None = None) -> int:

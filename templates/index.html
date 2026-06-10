@@ -38,8 +38,15 @@
         name="event_name"
         placeholder="e.g. GreenTech Berlin 2026"
         value="{{ current_event }}"
+        list="event-list"
+        autocomplete="off"
         required
       >
+      <datalist id="event-list">
+        {% for ev in events %}
+        <option value="{{ ev }}">
+        {% endfor %}
+      </datalist>
 
       <label for="exhibitor_name">Exhibitor</label>
       <input
@@ -47,8 +54,15 @@
         id="exhibitor_name"
         name="exhibitor_name"
         placeholder="e.g. Tesla Booth"
+        list="exhibitor-list"
+        autocomplete="off"
         required
       >
+      <datalist id="exhibitor-list">
+        {% for ex in exhibitors %}
+        <option value="{{ ex }}">
+        {% endfor %}
+      </datalist>
 
       <label>Photos</label>
       <div class="photo-input-row">
@@ -62,16 +76,8 @@
       <!-- Photo queue thumbnails -->
       <div id="photoQueue" class="photo-queue hidden"></div>
 
-      <button type="submit" id="scanBtn" class="btn-primary" disabled>Extract Cards</button>
+      <button type="submit" id="scanBtn" class="btn-primary" disabled>Upload Photos</button>
     </form>
-  </section>
-
-  <!-- Review Section -->
-  <section id="reviewSection" class="card hidden">
-    <h2>Review & Confirm</h2>
-    <p class="hint">Edit any fields, then tap <strong>Save All</strong>.</p>
-    <div id="cardList"></div>
-    <button id="saveAllBtn" class="btn-primary">Save All Contacts</button>
   </section>
 
   <!-- Status message -->
@@ -127,9 +133,6 @@ const openCameraBtn  = document.getElementById('openCameraBtn');
 const fileInput      = document.getElementById('fileInput');
 const photoQueueEl   = document.getElementById('photoQueue');
 const scanBtn        = document.getElementById('scanBtn');
-const reviewSection  = document.getElementById('reviewSection');
-const cardList       = document.getElementById('cardList');
-const saveAllBtn     = document.getElementById('saveAllBtn');
 const statusMsg      = document.getElementById('statusMsg');
 
 // Camera elements
@@ -142,8 +145,6 @@ const cameraDone     = document.getElementById('cameraDone');
 const cameraCount    = document.getElementById('cameraCount');
 const cameraThumbStrip = document.getElementById('cameraThumbStrip');
 
-let extractedCards = [];
-let currentEvent = '';
 let cameraStream = null;
 let cameraPhotos = []; // photos taken this camera session
 
@@ -279,127 +280,31 @@ function updateCameraCount() {
   cameraDone.disabled = n === 0;
 }
 
-// ── Scan submission ──────────────────────────────────────────────────────────
+// ── Upload submission ─────────────────────────────────────────────────────────
 scanForm.addEventListener('submit', async (e) => {
   e.preventDefault();
   if (photoQueue.length === 0) return;
 
-  currentEvent = document.getElementById('event_name').value;
   const formData = new FormData();
-  formData.append('event_name', currentEvent);
+  formData.append('event_name', document.getElementById('event_name').value);
   formData.append('exhibitor_name', document.getElementById('exhibitor_name').value);
   photoQueue.forEach(({ blob, name }) => formData.append('images', blob, name));
 
   scanBtn.disabled = true;
-  scanBtn.textContent = `Extracting ${photoQueue.length} card${photoQueue.length !== 1 ? 's' : ''}…`;
+  scanBtn.textContent = `Uploading ${photoQueue.length} photo${photoQueue.length !== 1 ? 's' : ''}…`;
 
   try {
     const res = await fetch('/scan', { method: 'POST', body: formData });
-    const json = await res.json();
-    extractedCards = json.cards;
-    renderReview(json.cards);
-    reviewSection.classList.remove('hidden');
-    reviewSection.scrollIntoView({ behavior: 'smooth' });
-    // Clear queue
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    showStatus('Photos successfully uploaded to the bucket');
     photoQueue.forEach(p => URL.revokeObjectURL(p.url));
     photoQueue = [];
     rebuildQueue();
   } catch (err) {
-    showStatus('Extraction failed: ' + err.message, true);
+    showStatus('Upload failed: ' + err.message, true);
   } finally {
     scanBtn.disabled = photoQueue.length === 0;
-    scanBtn.textContent = 'Extract Cards';
-  }
-});
-
-// ── Review ───────────────────────────────────────────────────────────────────
-function renderReview(cards) {
-  cardList.innerHTML = '';
-  cards.forEach((card, idx) => {
-    const div = document.createElement('div');
-    div.className = 'review-card';
-    div.dataset.idx = idx;
-
-    const isError = card.status === 'error';
-    div.innerHTML = `
-      <div class="review-card-header">
-        <span class="review-card-title">Card ${idx + 1}${card.filename ? ` — ${card.filename}` : ''}</span>
-        ${card.upload_id ? `<button class="btn-retry" data-upload-id="${card.upload_id}" data-idx="${idx}">↺ Retry</button>` : ''}
-      </div>
-      ${isError ? `<p class="extraction-error">${escapeHtml(card.data.error || 'Extraction failed')}</p>` : ''}
-    `;
-
-    if (!isError) {
-      Object.entries(card.data).forEach(([key, value]) => {
-        const row = document.createElement('div');
-        row.className = 'field-row';
-        row.innerHTML = `
-          <label>${key.replace(/_/g, ' ')}</label>
-          <input type="text" data-idx="${idx}" data-key="${key}" value="${escapeHtml(String(value || ''))}">
-        `;
-        div.appendChild(row);
-      });
-    }
-
-    cardList.appendChild(div);
-  });
-}
-
-cardList.addEventListener('click', async e => {
-  const btn = e.target.closest('.btn-retry');
-  if (!btn) return;
-  const uploadId = btn.dataset.uploadId;
-  const idx = parseInt(btn.dataset.idx);
-
-  btn.disabled = true;
-  btn.textContent = '…';
-
-  try {
-    const res = await fetch(`/uploads/${uploadId}/retry`, { method: 'POST' });
-    const json = await res.json();
-    extractedCards[idx].data = json.data;
-    extractedCards[idx].status = json.status;
-    // Re-render just this card
-    const cardDiv = cardList.querySelector(`[data-idx="${idx}"]`);
-    const newCards = [...extractedCards];
-    renderReview(newCards);
-  } catch (err) {
-    showStatus('Retry failed: ' + err.message, true);
-    btn.disabled = false;
-    btn.textContent = '↺ Retry';
-  }
-});
-
-function escapeHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-saveAllBtn.addEventListener('click', async () => {
-  document.querySelectorAll('#cardList input[data-idx]').forEach(input => {
-    const idx = parseInt(input.dataset.idx);
-    const key = input.dataset.key;
-    extractedCards[idx].data[key] = input.value;
-  });
-
-  saveAllBtn.disabled = true;
-  saveAllBtn.textContent = 'Saving…';
-
-  try {
-    const res = await fetch('/contacts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event_name: currentEvent, cards: extractedCards }),
-    });
-    const json = await res.json();
-    showStatus(`Saved ${json.saved} contact${json.saved !== 1 ? 's' : ''}!`);
-    reviewSection.classList.add('hidden');
-    cardList.innerHTML = '';
-    setTimeout(() => location.reload(), 1200);
-  } catch (err) {
-    showStatus('Save failed: ' + err.message, true);
-  } finally {
-    saveAllBtn.disabled = false;
-    saveAllBtn.textContent = 'Save All Contacts';
+    scanBtn.textContent = 'Upload Photos';
   }
 });
 

@@ -31,11 +31,13 @@ templates = Jinja2Templates(directory="templates")
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request, event: str = ""):
     events = store.list_events()
+    exhibitors = store.list_exhibitors()
     contacts = store.get_contacts(event or None)
     return templates.TemplateResponse("index.html", {
         "request": request,
         "contacts": contacts,
         "events": events,
+        "exhibitors": exhibitors,
         "current_event": event,
     })
 
@@ -65,6 +67,10 @@ async def scan(
         except Exception as e:
             data = {"error": str(e)}
             status = "error"
+
+        if status == "ok":
+            contact_id = store.save_contact(event_name, data)
+            store.link_upload_to_contact(upload_id, contact_id)
 
         return {"filename": img.filename, "upload_id": upload_id, "data": data, "status": status}
 
