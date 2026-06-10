@@ -1,5 +1,6 @@
 import asyncio
 import mimetypes
+import os
 import urllib.parse
 from pathlib import Path
 
@@ -98,3 +99,9 @@ async def export(event: str = ""):
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
