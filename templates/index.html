@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>CardSnap</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header>
+  <h1>CardSnap</h1>
+</header>
+
+<main>
+
+  <!-- Scan Section -->
+  <section class="card">
+    <h2>Scan Cards</h2>
+    <form id="scanForm">
+      <label for="event_name">Event name</label>
+      <input
+        type="text"
+        id="event_name"
+        name="event_name"
+        placeholder="e.g. GreenTech Berlin 2026"
+        value="{{ current_event }}"
+        required
+      >
+
+      <label for="images">Photos (select all at once)</label>
+      <input
+        type="file"
+        id="images"
+        name="images"
+        accept="image/*"
+        multiple
+        required
+      >
+
+      <button type="submit" id="scanBtn" class="btn-primary">Extract Cards</button>
+    </form>
+  </section>
+
+  <!-- Review Section (hidden until extraction completes) -->
+  <section id="reviewSection" class="card hidden">
+    <h2>Review & Confirm</h2>
+    <p class="hint">Edit any fields, then tap <strong>Save All</strong>.</p>
+    <div id="cardList"></div>
+    <button id="saveAllBtn" class="btn-primary">Save All Contacts</button>
+  </section>
+
+  <!-- Status message -->
+  <div id="statusMsg" class="status-msg hidden"></div>
+
+  <!-- Saved Contacts -->
+  {% if contacts %}
+  <section class="card">
+    <div class="contacts-header">
+      <h2>
+        {% if current_event %}
+          {{ current_event }} ({{ contacts|length }})
+        {% else %}
+          All Contacts ({{ contacts|length }})
+        {% endif %}
+      </h2>
+      <a href="/export{% if current_event %}?event={{ current_event }}{% endif %}" class="btn-export">Export Excel</a>
+    </div>
+
+    {% for contact in contacts %}
+    <div class="contact-row" id="contact-{{ contact.id }}">
+      <div class="contact-summary">
+        <strong>{{ contact.data.get('full_name') or (contact.data.get('first_name', '') + ' ' + contact.data.get('last_name', '')) or 'Unknown' }}</strong>
+        {% if contact.data.get('company') %}<span class="muted">· {{ contact.data.company }}</span>{% endif %}
+      </div>
+      <button class="btn-delete" onclick="deleteContact({{ contact.id }})">✕</button>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <!-- Filter by event -->
+  {% if events %}
+  <section class="card">
+    <h2>Events</h2>
+    <div class="event-list">
+      <a href="/" class="event-tag {% if not current_event %}active{% endif %}">All</a>
+      {% for ev in events %}
+      <a href="/?event={{ ev | urlencode }}" class="event-tag {% if ev == current_event %}active{% endif %}">{{ ev }}</a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+</main>
+
+<script>
+const scanForm = document.getElementById('scanForm');
+const reviewSection = document.getElementById('reviewSection');
+const cardList = document.getElementById('cardList');
+const saveAllBtn = document.getElementById('saveAllBtn');
+const statusMsg = document.getElementById('statusMsg');
+const scanBtn = document.getElementById('scanBtn');
+
+let extractedCards = [];
+let currentEvent = '';
+
+function showStatus(msg, isError = false) {
+  statusMsg.textContent = msg;
+  statusMsg.className = 'status-msg ' + (isError ? 'error' : 'success');
+  statusMsg.classList.remove('hidden');
+  setTimeout(() => statusMsg.classList.add('hidden'), 4000);
+}
+
+scanForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const formData = new FormData(scanForm);
+  currentEvent = formData.get('event_name');
+
+  scanBtn.disabled = true;
+  scanBtn.textContent = 'Extracting…';
+
+  try {
+    const res = await fetch('/scan', { method: 'POST', body: formData });
+    const json = await res.json();
+
+    extractedCards = json.cards;
+    renderReview(json.cards);
+    reviewSection.classList.remove('hidden');
+    reviewSection.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    showStatus('Extraction failed: ' + err.message, true);
+  } finally {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Extract Cards';
+  }
+});
+
+function renderReview(cards) {
+  cardList.innerHTML = '';
+  cards.forEach((card, idx) => {
+    const div = document.createElement('div');
+    div.className = 'review-card';
+    div.innerHTML = `<div class="review-card-title">Card ${idx + 1}${card.filename ? ` — ${card.filename}` : ''}</div>`;
+
+    const fields = card.data;
+    Object.entries(fields).forEach(([key, value]) => {
+      const row = document.createElement('div');
+      row.className = 'field-row';
+      row.innerHTML = `
+        <label>${key.replace(/_/g, ' ')}</label>
+        <input type="text" data-idx="${idx}" data-key="${key}" value="${escapeHtml(String(value || ''))}">
+      `;
+      div.appendChild(row);
+    });
+
+    cardList.appendChild(div);
+  });
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+saveAllBtn.addEventListener('click', async () => {
+  // Collect edited values back into extractedCards
+  document.querySelectorAll('#cardList input[data-idx]').forEach(input => {
+    const idx = parseInt(input.dataset.idx);
+    const key = input.dataset.key;
+    extractedCards[idx].data[key] = input.value;
+  });
+
+  saveAllBtn.disabled = true;
+  saveAllBtn.textContent = 'Saving…';
+
+  try {
+    const res = await fetch('/contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_name: currentEvent, cards: extractedCards }),
+    });
+    const json = await res.json();
+    showStatus(`Saved ${json.saved} contact${json.saved !== 1 ? 's' : ''}!`);
+    reviewSection.classList.add('hidden');
+    cardList.innerHTML = '';
+    setTimeout(() => location.reload(), 1200);
+  } catch (err) {
+    showStatus('Save failed: ' + err.message, true);
+  } finally {
+    saveAllBtn.disabled = false;
+    saveAllBtn.textContent = 'Save All Contacts';
+  }
+});
+
+async function deleteContact(id) {
+  if (!confirm('Delete this contact?')) return;
+  await fetch(`/contacts/${id}`, { method: 'DELETE' });
+  document.getElementById(`contact-${id}`)?.remove();
+}
+</script>
+
+</body>
+</html>
